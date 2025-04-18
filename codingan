@@ -1,0 +1,278 @@
+**Controller**
+```php
+// app/Http/Controllers/QuizController.php
+
+namespace App\Http\Controllers;
+
+use App\Models\Kanji;
+use App\Models\Quiz;
+use App\Models\Result;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+
+class QuizController extends Controller
+{
+    public function index()
+    {
+        $levels = ['N5', 'N4', 'N3', 'N2', 'N1'];
+        return view('quiz.index', compact('levels'));
+    }
+
+    public function show($level)
+    {
+        $kanjis = Kanji::where('level', $level)->get();
+        return view('quiz.show', compact('kanjis', 'level'));
+    }
+
+    public function store(Request $request)
+    {
+        $user = Auth::user();
+        $level = $request->input('level');
+        $score = $request->input('score');
+
+        $result = Result::where('user_id', $user->id)->where('level', $level)->first();
+        if ($result) {
+            $result->update(['score' => $score]);
+        } else {
+            Result::create(['user_id' => $user->id, 'level' => $level, 'score' => $score]);
+        }
+
+        return redirect()->route('quiz.index');
+    }
+}
+```
+
+**Model**
+```php
+// app/Models/Kanji.php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class Kanji extends Model
+{
+    use HasFactory;
+
+    protected $fillable = ['character', 'meaning', 'level'];
+
+    public function results()
+    {
+        return $this->hasMany(Result::class);
+    }
+}
+
+// app/Models/Quiz.php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class Quiz extends Model
+{
+    use HasFactory;
+
+    protected $fillable = ['level', 'score'];
+
+    public function results()
+    {
+        return $this->hasMany(Result::class);
+    }
+}
+
+// app/Models/Result.php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class Result extends Model
+{
+    use HasFactory;
+
+    protected $fillable = ['user_id', 'level', 'score'];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function kanjis()
+    {
+        return $this->belongsToMany(Kanji::class);
+    }
+}
+```
+
+**Migration**
+```php
+// database/migrations/2023_03_01_000000_create_kanji_table.php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+class CreateKanjiTable extends Migration
+{
+    public function up()
+    {
+        Schema::create('kanjis', function (Blueprint $table) {
+            $table->id();
+            $table->string('character');
+            $table->string('meaning');
+            $table->string('level');
+            $table->timestamps();
+        });
+    }
+
+    public function down()
+    {
+        Schema::dropIfExists('kanjis');
+    }
+}
+
+// database/migrations/2023_03_01_000001_create_results_table.php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+class CreateResultsTable extends Migration
+{
+    public function up()
+    {
+        Schema::create('results', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('user_id')->constrained()->onDelete('cascade');
+            $table->string('level');
+            $table->integer('score');
+            $table->timestamps();
+        });
+    }
+
+    public function down()
+    {
+        Schema::dropIfExists('results');
+    }
+}
+```
+
+**Web**
+```php
+// routes/web.php
+
+use App\Http\Controllers\QuizController;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/quiz', [QuizController::class, 'index'])->name('quiz.index');
+Route::get('/quiz/{level}', [QuizController::class, 'show'])->name('quiz.show');
+Route::post('/quiz', [QuizController::class, 'store'])->name('quiz.store');
+```
+
+**View**
+```php
+// resources/views/quiz/index.blade.php
+
+<h1>Quiz Kanji</h1>
+
+<ul>
+    @foreach ($levels as $level)
+        <li>
+            <a href="{{ route('quiz.show', $level) }}">{{ $level }}</a>
+        </li>
+    @endforeach
+</ul>
+
+// resources/views/quiz/show.blade.php
+
+<h1>Quiz Kanji {{ $level }}</h1>
+
+<form action="{{ route('quiz.store') }}" method="post">
+    @csrf
+    <input type="hidden" name="level" value="{{ $level }}">
+    <input type="hidden" name="score" value="0">
+
+    @foreach ($kanjis as $kanji)
+        <p>{{ $kanji->character }}: {{ $kanji->meaning }}</p>
+        <input type="radio" name="answer" value="{{ $kanji->id }}">
+    @endforeach
+
+    <button type="submit">Submit</button>
+</form>
+```
+
+**Breeze**
+```php
+// app/Http/Controllers/Auth/AuthenticatedSessionController.php
+
+namespace App\Http\Controllers\Auth;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+
+class AuthenticatedSessionController extends Controller
+{
+    public function store(Request $request)
+    {
+        $request->authenticate();
+
+        $request->session()->regenerate();
+
+        return redirect()->intended(RouteServiceProvider::HOME);
+    }
+}
+```
+
+**Level**
+```php
+// app/Models/Result.php
+
+public function isPassed()
+{
+    $passedLevels = [
+        'N5' => 60,
+        'N4' => 70,
+        'N3' => 80,
+        'N2' => 90,
+        'N1' => 95,
+    ];
+
+    return $this->score >= $passedLevels[$this->level];
+}
+```
+
+**Route**
+```php
+// routes/web.php
+
+Route::get('/quiz/{level}', [QuizController::class, 'show'])->name('quiz.show')->middleware('level');
+```
+
+**Middleware**
+```php
+// app/Http/Middleware/Level.php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+
+class Level
+{
+    public function handle(Request $request, Closure $next)
+    {
+        $user = Auth::user();
+        $level = $request->route('level');
+
+        $result = Result::where('user_id', $user->id)->where('level', $level)->first();
+        if ($result && !$result->isPassed()) {
+            return redirect()->route('quiz.index');
+        }
+
+        return $next($request);
+    }
+}
+```
